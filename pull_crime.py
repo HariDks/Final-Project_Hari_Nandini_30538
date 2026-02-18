@@ -1,42 +1,34 @@
 #!/usr/bin/env python
 
+import os
+import time
 import pandas as pd
 from sodapy import Socrata
-
-# Connect to Chicago Data Portal
+  
 client = Socrata(
     "data.cityofchicago.org",
-    "Lg7zqHMbACUvgMjA2CcB3iPyH"   # app token
+    "Lg7zqHMbACUvgMjA2CcB3iPyH",
+    timeout=120
 )
 
-all_results = []
+dataset_id = "ijzp-q8t2"
+select_cols = "id,date,year,primary_type,latitude,longitude,community_area,beat,district,ward"
+where_clause = "date between '2011-01-01T00:00:00.000' and '2018-12-31T23:59:59.999'"
 
-limit = 50000   # max Socrata allows per request
+limit = 10000
 offset = 0
+rows = []
 
 while True:
-    print(f"Requesting rows {offset} to {offset + limit}...")
-
-    batch = client.get(
-        "x2n5-8w5q",
-        limit=limit,
-        offset=offset
-    )
-
-    if len(batch) == 0:
-        print("Done downloading.")
+    batch = client.get(dataset_id, select=select_cols, where=where_clause, limit=limit, offset=offset)
+    if not batch:
         break
-
-    all_results.extend(batch)
+    rows.extend(batch)
     offset += limit
+    print("rows:", len(rows))
+    time.sleep(0.2)
 
-    print(f"Total rows so far: {len(all_results)}")
+df = pd.DataFrame.from_records(rows)
+df.to_csv("crimes_2011_2018.csv", index=False)
+print(df.shape)
 
-# Convert to DataFrame
-df = pd.DataFrame.from_records(all_results)
-
-# Save
-df.to_csv("chicago_crime_all.csv", index=False)
-
-print("Saved to chicago_crime_all.csv")
-print("Final shape:", df.shape)
