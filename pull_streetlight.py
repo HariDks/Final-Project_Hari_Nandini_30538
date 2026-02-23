@@ -1,7 +1,17 @@
 #!/usr/bin/env python
 
+from pathlib import Path
 import pandas as pd
 from sodapy import Socrata
+
+# -------------------------------
+# Step 1: Define project paths
+# -------------------------------
+
+project_dir = Path(__file__).parent  # folder where this script is located
+data_dir = project_dir / "data"      # data folder
+
+output_csv = data_dir / "streetlights_chicago.csv"
 
 # Connect to Chicago Data Portal
 client = Socrata(
@@ -36,7 +46,7 @@ while True:
 df = pd.DataFrame.from_records(all_results)
 
 # Save
-df.to_csv("chicago_streetlights_all.csv", index=False)
+df.to_csv(output_csv, index=False)
 
 print("Saved to chicago_streetlights_all.csv")
 print("Final shape:", df.shape)
