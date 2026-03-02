@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
+import matplotlib.pyplot as plt
 
 # -----------------------
 # Paths
@@ -18,8 +19,8 @@ from shapely.geometry import Point
 project_dir = Path(__file__).parent
 data_dir = project_dir / "data"
 
-buffers_file = data_dir / "streetlights_buffers.geojson"
-crime_csv = data_dir/"crimes_2011_2018.csv"
+buffers_file = data_dir / "/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data/streetlights_buffers.geojson"
+crime_csv = data_dir/"/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/crimes_2011_2018.csv"
 output_file = data_dir / "streetlight_crime_pre_day_buckets_events.geojson"
 
 # -----------------------
@@ -153,3 +154,69 @@ print(joined["days_before_request"].value_counts().sort_index())
 
 print("\nRadii counts:")
 print(joined["buffer_radius_m"].value_counts(dropna=False))
+
+print(joined["id"].nunique())
+print(len(joined))
+
+streetlight_level = (
+    joined
+    .groupby(["request_id", "buffer_radius_m", "days_before_request"], as_index=False)
+    .agg(
+        crime_count=("id", "count"),
+        unique_crimes=("id", "nunique"),
+    )
+)
+
+# Create full index of all request_id x radius x day buckets (1..5)
+all_idx = pd.MultiIndex.from_product(
+    [
+        joined["request_id"].unique(),
+        joined["buffer_radius_m"].unique(),
+        [1, 2, 3, 4, 5],
+    ],
+    names=["request_id", "buffer_radius_m", "days_before_request"]
+)
+
+streetlight_level = (
+    streetlight_level
+    .set_index(["request_id", "buffer_radius_m", "days_before_request"])
+    .reindex(all_idx, fill_value=0)
+    .reset_index()
+)
+
+request_meta = (
+    buffers[["request_id", "buffer_radius_m", "creation_date", "status"]]
+    .drop_duplicates()
+)
+
+streetlight_level = streetlight_level.merge(
+    request_meta,
+    on=["request_id", "buffer_radius_m"],
+    how="left"
+)
+
+#visualization 1
+output_png = data_dir / "pretrend_avg_crimes_per_request.png"
+avg_pretrend = (
+    streetlight_level
+    .groupby(["buffer_radius_m", "days_before_request"], as_index=False)
+    .agg(avg_crimes_per_request=("unique_crimes", "mean"))
+)
+
+plt.figure()
+for radius in sorted(avg_pretrend["buffer_radius_m"].unique()):
+    temp = avg_pretrend[avg_pretrend["buffer_radius_m"] == radius].sort_values("days_before_request")
+    # Reverse x-axis to show 5 -> 1 (approaching request date)
+    plt.plot(temp["days_before_request"], temp["avg_crimes_per_request"], marker="o", label=f"{radius} m")
+
+plt.gca().invert_xaxis()
+plt.xlabel("Days before request (5 -> 1)")
+plt.ylabel("Average crimes per request")
+plt.title("Pre-trend: crimes within buffer in the 1–5 days before request creation")
+plt.legend(title="Buffer radius")
+plt.tight_layout()
+
+plt.savefig(output_png, dpi=200)
+print(f"Saved plot to: {output_png}")
+
+plt.show()

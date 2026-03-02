@@ -13,8 +13,8 @@ from shapely.geometry import Point
 project_dir = Path(__file__).parent
 data_dir = project_dir / "data"
 
-buffers_file = data_dir / "streetlights_buffers.geojson"
-crime_csv =  data_dir/"crimes_2011_2018.csv"
+buffers_file = data_dir / "/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data/streetlights_buffers.geojson"
+crime_csv =  data_dir/"/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/crimes_2011_2018.csv"
 output_file = data_dir / "streetlight_crime_events.geojson"
 
 # -----------------------
@@ -148,3 +148,52 @@ print(joined["buffer_radius_m"].value_counts(dropna=False))
 
 print("\nRequests (top 5):")
 print(joined["request_id"].value_counts().head())
+
+# Ensure datetime types (safe)
+joined["crime_date"] = pd.to_datetime(joined["crime_date"], errors="coerce")
+joined["creation_date"] = pd.to_datetime(joined["creation_date"], errors="coerce")
+joined["completion_date"] = pd.to_datetime(joined["completion_date"], errors="coerce")
+
+# Build mask fresh from *this* joined
+time_mask = (
+    (joined["crime_date"] >= joined["creation_date"]) &
+    (joined["completion_date"].isna() | (joined["crime_date"] <= joined["completion_date"]))
+)
+
+# Filter by position, not index labels
+joined = joined.loc[time_mask.to_numpy()].copy()
+
+print("After time filter:", len(joined))
+
+# -----------------------
+# Streetlight-level aggregation
+# one row per request_id x buffer_radius_m
+# -----------------------
+streetlight_level = (
+    joined
+    .groupby(["request_id", "buffer_radius_m"], as_index=False)
+    .agg(
+        crime_count=("id", "count"),
+        unique_crimes=("id", "nunique"),
+        creation_date=("creation_date", "first"),
+        completion_date=("completion_date", "first"),
+        status=("status", "first"),
+    )
+)
+
+print("\nStreetlight-level preview:")
+print(streetlight_level.head())
+
+# Duration in days (can be NaN if completion_date missing)
+streetlight_level["days_open"] = (
+    streetlight_level["completion_date"] - streetlight_level["creation_date"]
+).dt.total_seconds() / 86400.0
+
+# Crime rate per day (only for requests with a completion_date)
+streetlight_level["crimes_per_day"] = streetlight_level["unique_crimes"] / streetlight_level["days_open"]
+
+streetlight_level = streetlight_level.dropna(subset=["completion_date"])
+
+output_csv = data_dir / "streetlight_level_crime_during_service.csv"
+streetlight_level.to_csv(output_csv, index=False)
+print(f"Saved streetlight-level dataset to: {output_csv}")
