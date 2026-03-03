@@ -165,67 +165,7 @@ plt.savefig(data_dir / "plot_D_income_quintile_bar.png", dpi=150)
 plt.show()
 
 # =============================================================
-# PLOT E: Bivariate choropleth — income × crime per outage-day
-# Overlaid on Chicago basemap via contextily
-#
-# Colour scheme (2×2 quadrant):
-#   Low income + High crime  → #d7191c  red    (equity concern)
-#   Low income + Low crime   → #fdae61  orange (poor but safer)
-#   High income + Low crime  → #2c7bb6  blue   (affluent, safe)
-#   High income + High crime → #7b3294  purple (wealthy, still exposed)
-# =============================================================
-inc_med = tract_agg["median_income"].median()
-cpd_med = tract_agg["crime_per_outage_day"].median()
-
-QUAD_COLORS = {
-    ("low_inc",  "high_cpd"): ("#d7191c", "Low income,  High crime"),
-    ("low_inc",  "low_cpd"):  ("#fdae61", "Low income,  Low crime"),
-    ("high_inc", "low_cpd"):  ("#2c7bb6", "High income, Low crime"),
-    ("high_inc", "high_cpd"): ("#7b3294", "High income, High crime"),
-}
-
-def assign_quad(row):
-    inc = "low_inc"  if row["median_income"]       < inc_med else "high_inc"
-    cpd = "low_cpd"  if row["crime_per_outage_day"] < cpd_med else "high_cpd"
-    color, label = QUAD_COLORS[(inc, cpd)]
-    return pd.Series({"quad_color": color, "quad_label": label})
-
-tract_agg[["quad_color", "quad_label"]] = tract_agg.apply(assign_quad, axis=1)
-
-# Merge quadrant labels onto tract polygons; project to Web Mercator for basemap
-biv_map = (
-    tracts_gdf[["GEOID", "geometry"]]
-    .merge(tract_agg[["GEOID", "quad_color", "quad_label"]], on="GEOID", how="inner")
-    .pipe(lambda df: gpd.GeoDataFrame(df, geometry="geometry", crs=tracts_gdf.crs))
-    .to_crs(epsg=3857)   # Web Mercator required by contextily
-)
-
-fig, ax = plt.subplots(figsize=(11, 14))
-for color, group in biv_map.groupby("quad_color"):
-    group.plot(ax=ax, color=color, edgecolor="white", linewidth=0.1, alpha=0.75)
-
-# Chicago basemap (light grey CartoDB tiles)
-ctx.add_basemap(ax, source=ctx.providers.CartoDB.Positron, zoom=11)
-
-legend_patches = [
-    mpatches.Patch(color=v[0], label=v[1])
-    for v in QUAD_COLORS.values()
-]
-ax.legend(handles=legend_patches, loc="lower left", fontsize=9,
-          title="Income × Outage crime rate\n(median split)", title_fontsize=9,
-          framealpha=0.9)
-ax.set_title(
-    "Bivariate: tract income vs nighttime crimes per outage-day\n"
-    "(controls for number and duration of outages)",
-    fontsize=12
-)
-ax.set_axis_off()
-plt.tight_layout()
-plt.savefig(data_dir / "plot_E_bivariate_choropleth.png", dpi=150)
-plt.show()
-
-# =============================================================
-# BEFORE / DURING COMPARISON SETUP
+# BEFORE / DURING COMPARISON SETUP  (used by plots E, G, H)
 # Symmetric window: only events where abs(days_from_outage_request) <= time_to_fix
 # Both pre and during normalised by same winsorised total_outage_days → comparable
 # =============================================================
@@ -249,9 +189,69 @@ def before_during_tract(ev30_tracts_sub, outage_days_df):
     result["crime_increased"] = result["rate_change"] > 0
     return result[result["median_income"] > 0].copy()
 
-
-# Compute overall tc_all — used by Plot G
 tc_all = before_during_tract(ev30_tracts, outage_days_base)
+
+# =============================================================
+# PLOT E: Bivariate choropleth — income × change in crime during outage
+# Overlaid on Chicago basemap via contextily
+#
+# Colour scheme (2×2 quadrant) — same metric as binned dose-response:
+#   rate_change = during_rate − before_rate (symmetric window, per outage-day)
+#   Income split: median; Crime split: 0 (positive = rose, negative = fell)
+#
+#   Low income  + Crime ↑ → #d7191c  red    (equity concern)
+#   Low income  + Crime ↓ → #fdae61  orange (low income but safer)
+#   High income + Crime ↓ → #2c7bb6  blue   (affluent, safer during outage)
+#   High income + Crime ↑ → #7b3294  purple (wealthy, still exposed)
+# =============================================================
+inc_med_e = tc_all["median_income"].median()
+
+QUAD_COLORS = {
+    ("low_inc",  "crime_up"):   ("#d7191c", "Low income,  Crime ↑ during outage"),
+    ("low_inc",  "crime_down"): ("#fdae61", "Low income,  Crime ↓ during outage"),
+    ("high_inc", "crime_down"): ("#2c7bb6", "High income, Crime ↓ during outage"),
+    ("high_inc", "crime_up"):   ("#7b3294", "High income, Crime ↑ during outage"),
+}
+
+def assign_quad(row):
+    inc = "low_inc"  if row["median_income"] < inc_med_e else "high_inc"
+    chg = "crime_up" if row["rate_change"]   >= 0        else "crime_down"
+    color, label = QUAD_COLORS[(inc, chg)]
+    return pd.Series({"quad_color": color, "quad_label": label})
+
+tc_e = tc_all.copy()
+tc_e[["quad_color", "quad_label"]] = tc_e.apply(assign_quad, axis=1)
+
+# Merge quadrant labels onto tract polygons; project to Web Mercator for basemap
+biv_map = (
+    tracts_gdf[["GEOID", "geometry"]]
+    .merge(tc_e[["GEOID", "quad_color", "quad_label"]], on="GEOID", how="inner")
+    .pipe(lambda df: gpd.GeoDataFrame(df, geometry="geometry", crs=tracts_gdf.crs))
+    .to_crs(epsg=3857)
+)
+
+fig, ax = plt.subplots(figsize=(11, 14))
+for color, group in biv_map.groupby("quad_color"):
+    group.plot(ax=ax, color=color, edgecolor="white", linewidth=0.1, alpha=0.75)
+
+ctx.add_basemap(ax, source=ctx.providers.CartoDB.Positron, zoom=11)
+
+legend_patches = [
+    mpatches.Patch(color=v[0], label=v[1])
+    for v in QUAD_COLORS.values()
+]
+ax.legend(handles=legend_patches, loc="lower left", fontsize=9,
+          title="Income × crime change during outage\n(income: median split; crime: 0 = baseline)",
+          title_fontsize=9, framealpha=0.9)
+ax.set_title(
+    "Bivariate: tract income vs change in nighttime crime during streetlight outages\n"
+    "(rate_change = during_rate − before_rate; same metric as binned dose-response)",
+    fontsize=12
+)
+ax.set_axis_off()
+plt.tight_layout()
+plt.savefig(data_dir / "plot_E_bivariate_choropleth.png", dpi=150)
+plt.show()
 
 # =============================================================
 # PLOT G: Absolute rate change choropleth — excess crimes per outage-day
