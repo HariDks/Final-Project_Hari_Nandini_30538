@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # -----------------------
 # Paths
 # -----------------------
-data_dir = Path("/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data")
+data_dir = Path(__file__).parent / "data"
 data_dir.mkdir(parents=True, exist_ok=True)
 
 input_csv = data_dir / "streetlight_level_crime_during_service.csv"

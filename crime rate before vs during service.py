@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # -----------------------
 # Paths
 # -----------------------
-data_dir = Path("/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data")
+data_dir = Path(__file__).parent / "data"
 
 before_file = data_dir / "streetlight_crime_pre_day_buckets_events.geojson"
 during_csv  = data_dir / "streetlight_level_crime_during_service.csv"

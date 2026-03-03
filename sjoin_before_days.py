@@ -19,8 +19,8 @@ import matplotlib.pyplot as plt
 project_dir = Path(__file__).parent
 data_dir = project_dir / "data"
 
-buffers_file = data_dir / "/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data/streetlights_buffers.geojson"
-crime_csv = data_dir/"/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/crimes_2011_2018.csv"
+buffers_file = data_dir / "streetlights_buffers.geojson"
+crime_csv = data_dir / "crimes_2011_2018.csv"
 output_file = data_dir / "streetlight_crime_pre_day_buckets_events.geojson"
 
 # -----------------------
