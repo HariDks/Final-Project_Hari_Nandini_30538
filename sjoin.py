@@ -1,6 +1,5 @@
 # join_streetlights_crime.py
-# Spatiotemporal join:
-# Crimes within streetlight buffers AND within service request time window
+# Spatial join: all crimes within streetlight buffers, with outage indicator columns
 
 from pathlib import Path
 import pandas as pd
@@ -13,8 +12,8 @@ from shapely.geometry import Point
 project_dir = Path(__file__).parent
 data_dir = project_dir / "data"
 
-buffers_file = data_dir / "/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/data/streetlights_buffers.geojson"
-crime_csv =  data_dir/"/Users/haridharshinik.s/Final-Project_Hari_Nandini_30538/crimes_2011_2018.csv"
+buffers_file = data_dir / "streetlights_buffers.geojson"
+crime_csv = data_dir / "crimes_2011_2018.csv"
 output_file = data_dir / "streetlight_crime_events.geojson"
 
 # -----------------------
@@ -38,8 +37,8 @@ if missing_buf:
 buffers["creation_date"] = pd.to_datetime(buffers["creation_date"], errors="coerce")
 buffers["completion_date"] = pd.to_datetime(buffers["completion_date"], errors="coerce")
 
-# Drop rows without creation date (can’t define a window)
-buffers = buffers.dropna(subset=["creation_date"]).copy()
+# Drop rows missing either date — both are required to define the outage window
+buffers = buffers.dropna(subset=["creation_date", "completion_date"]).copy()
 
 # Ensure CRS is projected (meters)
 if buffers.crs is None:
@@ -90,18 +89,37 @@ joined = gpd.sjoin(
 print("After spatial join:", len(joined))
 
 # -----------------------
-# Temporal filter
-# Keep crimes during the service window:
-# creation_date ≤ crime_date ≤ completion_date
-# If completion_date is missing → treat as "open request" (no upper bound)
+# Derive columns and filter to analysis window
 # -----------------------
-time_mask = (
-    (joined["crime_date"] >= joined["creation_date"]) &
-    (joined["completion_date"].isna() | (joined["crime_date"] <= joined["completion_date"]))
+joined["crime_date"] = pd.to_datetime(joined["crime_date"], errors="coerce")
+joined["creation_date"] = pd.to_datetime(joined["creation_date"], errors="coerce")
+joined["completion_date"] = pd.to_datetime(joined["completion_date"], errors="coerce")
+
+# Drop rows where completion_date is missing (can't define the outage window)
+joined = joined.dropna(subset=["completion_date"]).copy()
+print("After dropping missing completion_date:", len(joined))
+
+# time_to_fix — days from creation to completion
+joined["time_to_fix"] = (
+    (joined["completion_date"] - joined["creation_date"]).dt.total_seconds() / 86400.0
 )
 
-joined = joined[time_mask].copy()
-print("After time filter:", len(joined))
+# days_from_outage_request — signed days between crime and creation date
+# negative = crime before request, positive = crime after request
+joined["days_from_outage_request"] = (
+    (joined["crime_date"] - joined["creation_date"]).dt.total_seconds() / 86400.0
+)
+
+# Keep only the analysis window: 10 days before request up to completion date
+window_mask = (
+    (joined["days_from_outage_request"] >= -10) &
+    (joined["days_from_outage_request"] <= joined["time_to_fix"])
+)
+joined = joined[window_mask].copy()
+print("After window filter (-10 days to completion):", len(joined))
+
+# crime_streetlight_outage — 1 if crime is during the outage (day 0 to completion), 0 if in pre-window
+joined["crime_streetlight_outage"] = (joined["days_from_outage_request"] >= 0).astype(int)
 
 # -----------------------
 # Clean output
@@ -124,6 +142,11 @@ cols = [
     "creation_date",
     "completion_date",
     "status",
+
+    # Derived columns
+    "crime_streetlight_outage",
+    "time_to_fix",
+    "days_from_outage_request",
 
     # Geometry (crime point)
     "geometry",
@@ -149,50 +172,33 @@ print(joined["buffer_radius_m"].value_counts(dropna=False))
 print("\nRequests (top 5):")
 print(joined["request_id"].value_counts().head())
 
-# Ensure datetime types (safe)
-joined["crime_date"] = pd.to_datetime(joined["crime_date"], errors="coerce")
-joined["creation_date"] = pd.to_datetime(joined["creation_date"], errors="coerce")
-joined["completion_date"] = pd.to_datetime(joined["completion_date"], errors="coerce")
-
-# Build mask fresh from *this* joined
-time_mask = (
-    (joined["crime_date"] >= joined["creation_date"]) &
-    (joined["completion_date"].isna() | (joined["crime_date"] <= joined["completion_date"]))
-)
-
-# Filter by position, not index labels
-joined = joined.loc[time_mask.to_numpy()].copy()
-
-print("After time filter:", len(joined))
-
 # -----------------------
 # Streetlight-level aggregation
 # one row per request_id x buffer_radius_m
 # -----------------------
+joined["crime_outside_outage"] = (joined["crime_streetlight_outage"] == 0).astype(int)
+
 streetlight_level = (
     joined
     .groupby(["request_id", "buffer_radius_m"], as_index=False)
     .agg(
-        crime_count=("id", "count"),
-        unique_crimes=("id", "nunique"),
+        total_crimes=("id", "count"),
+        unique_total_crimes=("id", "nunique"),
+        crimes_during_outage=("crime_streetlight_outage", "sum"),
+        crimes_outside_outage=("crime_outside_outage", "sum"),
         creation_date=("creation_date", "first"),
         completion_date=("completion_date", "first"),
         status=("status", "first"),
+        time_to_fix=("time_to_fix", "first"),
     )
+)
+
+streetlight_level["crimes_per_day"] = (
+    streetlight_level["crimes_during_outage"] / streetlight_level["time_to_fix"]
 )
 
 print("\nStreetlight-level preview:")
 print(streetlight_level.head())
-
-# Duration in days (can be NaN if completion_date missing)
-streetlight_level["days_open"] = (
-    streetlight_level["completion_date"] - streetlight_level["creation_date"]
-).dt.total_seconds() / 86400.0
-
-# Crime rate per day (only for requests with a completion_date)
-streetlight_level["crimes_per_day"] = streetlight_level["unique_crimes"] / streetlight_level["days_open"]
-
-streetlight_level = streetlight_level.dropna(subset=["completion_date"])
 
 output_csv = data_dir / "streetlight_level_crime_during_service.csv"
 streetlight_level.to_csv(output_csv, index=False)
